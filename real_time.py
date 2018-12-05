@@ -7,7 +7,7 @@ to fetch real time data
 from lxml import html
 import requests
 import pandas as pd
-from datetime import datetime, date
+from datetime import datetime
 
 pd.set_option('display.max_columns', 20)
 pd.set_option('display.width', 1000)
@@ -18,42 +18,14 @@ column_name = ['name_eng', 'name_chi', 'today_open', 'last_close', 'today_high',
                'bid', 'ask', 'volumn', 'amount', '买二量/股', '买二价', '买三量/股', '买三价', '买四量/股', '买四价', '买五量/股', '买五价',
                '卖一量/股', '卖一价', '卖二量/股', '卖二价', '卖三量/股', '卖三价', '卖四量/股', '卖四价', '卖五量/股', '卖五价', '日期', '时间']
 
-
-def real_time_future(index):
-    rt_fut_price = []
-    fut_code = {"HSI": 200000, "HSCEI": 200200}
-    for i in range(2):
-        url = "http://www.aastocks.com/en/stocks/market/bmpfutures.aspx?future=" + str(fut_code[index] + i)
-        page = requests.get(url, headers=headers)
-        tree = html.fromstring(page.content)
-
-        expiry_month = int(tree.xpath("//*[@id='ssMain']/div[4]/div[5]/table/tr[6]/td[1]/div[2]//text()").pop()[5:7])
-        price = tree.xpath("//*[@id='ssMain']/div[4]/div[5]/table/tr[1]/td[1]/div[4]//text()").pop().strip().replace(
-            ",", "")
-        if price != 'N/A':
-            rt_fut_price.append(int(price))
-        else:
-            rt_fut_price.append(None)
-    return rt_fut_price
-
-
-# print(real_time_future())
-
-# convert code into the url
-def gen_url(input):
-    if isinstance(input, list):
-        return "http://hq.sinajs.cn/list=" + ",".join(
-            ["rt_hk{}".format(str(code).zfill(5)) if isinstance(code, int) else "rt_hk{}".format(code) for code in
-             input])
-    elif isinstance(input, int):
-        return "http://hq.sinajs.cn/list=rt_hk" + str(input).zfill(5)
-    else:
-        return "http://hq.sinajs.cn/list=rt_hk" + input
-
+# convert list of codes into sina stock api url
+def gen_url(input: list) -> str:
+    return "http://hq.sinajs.cn/list=" + \
+           ",".join(["rt_hk{}".format(str(code).zfill(5)) for code in input])
 
 # extract data from the url
-def get_real_time(codes):
-    # to get data from url
+def get_real_time(codes: list):
+    # to get data from api
     url = gen_url(codes)
     page = requests.get(url, headers=headers)
     page_content = page.content.decode("GBK")
@@ -78,18 +50,6 @@ def get_real_time(codes):
         result[2:13] = list(map(float, result[2:13]))
         data_output[code] = result[:13]
     return data_output
-
-
-def real_time(code):
-    url = gen_url(code)
-    return get_url(url)
-
-
-def real_time_list(code_list):
-    rtdata = {}
-    for code in code_list:
-        rtdata[code] = real_time(code)
-    return rtdata
 
 #import the basic data of the instruments
 def get_details(file):
@@ -209,49 +169,7 @@ class UpdateList(object):
         print(compare[["bid", "ask", "ex_price", "lot_size", "be_rel_ask", "value", "value%", "days_to_maturity"]])
         value_adj = base_details["value"] - target_details["value"] #adjust the difference in value resulted from ex_price difference
 
-        #calculate the time premium
-
-
-        #return self.std_sort(df_comp)
-
-
-    def index_status(self):
-        status = self.rt_index.iloc[0]
-        name = status["name_eng"]
-        price = status["price"]
-        volumn = round(status["volumn"] / 1000000, 2)
-        change = "{}%".format(int((price / status["last_close"] - 1) * 10000) / 100)
-        low, high = real_time_highlow(self.index)
-        from_high = "-{}%".format(int((1 - price / high) * 10000) / 100)
-        from_low =  "+{}%".format(int((price / low - 1) * 10000) / 100)
-        return "{}: {}\t{}\t{}bn\n{} / {} from 1-month high/low".format(name, price, change, volumn, from_high, from_low)
-
-def real_time_highlow(index):
-    url = "http://www.aastocks.com/tc/stocks/market/index/hk-index-con.aspx?index=" + index
-    page = requests.get(url, headers=headers)
-    tree = html.fromstring(page.content)
-
-    month_highlow = tree.xpath("//*[@id='hkIdxContainer']/div[5]/div[8]//text()").pop().split('-')
-    daily_highlow = tree.xpath("//*[@id='hkIdxContainer']/div[5]/div[2]//text()").pop().split('-')
-    low = min(int(float(month_highlow[0].strip().replace(',', ''))),
-              int(float(daily_highlow[0].strip().replace(',', ''))))
-    high = max(int(float(month_highlow[1].strip().replace(',', ''))),
-               int(float(daily_highlow[1].strip().replace(',', ''))))
-    return low, high
-
-
 if __name__ == "__main__":
-
-
-    # to derive the list of codes to refresh
-    cl = get_details("hsi_data.csv")  # get full list
-    cl = cl[cl["ex_price"] <= 27000]
-    cl = list(cl.index)  # convert into list
-
-    u = UpdateList(cl, "hsi")
-    #print(u.peer_comp_all(11570)[["bid", "ask", "ex_price", "be_rel_ask", "value", "value%", "days_to_maturity"]])
-    #print(u.peer_comp_similar(23106, ex_price=100, days_to_maturity=5)[["bid", "ask", "ex_price", "be_rel_ask", "value", "value%", "days_to_maturity"]])
-    print(u.imply_time_value(23106,100))
-
+    print(gen_url(["20360",23106,1699,"700"]))
 
 
