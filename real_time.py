@@ -1,9 +1,3 @@
-'''
-to fetch real time data
-1. real time stock data from Sina api
-2. index and future data from aastock
-'''
-
 from lxml import html
 import requests
 import pandas as pd
@@ -21,10 +15,10 @@ column_name = ['name_eng', 'name_chi', 'today_open', 'last_close', 'today_high',
 # convert list of codes into sina stock api url
 def gen_url(input: list) -> str:
     return "http://hq.sinajs.cn/list=" + \
-           ",".join(["rt_hk{}".format(str(code).zfill(5)) for code in input])
+           ",".join(["rt_hk{}".format(str(code).zfill(5)) if isinstance(code, int) else "rt_hk{}".format(str(code)) for code in input])
 
 # extract data from the url
-def get_real_time(codes: list):
+def get_real_time(codes: list) -> dict:
     # to get data from api
     url = gen_url(codes)
     page = requests.get(url, headers=headers)
@@ -50,34 +44,50 @@ def get_real_time(codes: list):
         result[2:13] = list(map(float, result[2:13]))
         data_output[code] = result[:13]
     return data_output
+    #sample output:
+    # {20360: ['HSHSCEI@EP1812A', '中企汇丰八乙沽Ａ', 0.082, 0.044, 0.082, 0.082, 0.082, 0.038, 86.364, 0.083, 0.089, 24600.0, 300000.0],
+    # 23106: ['HS-HSI @EP1901D', '恒指汇丰九一沽Ｄ', 0.11, 0.082, 0.13, 0.11, 0.13, 0.048, 58.537, 0.133, 0.14, 391750.0, 3140000.0]}
 
 #import the basic data of the instruments
-def get_details(file):
-    df = pd.read_csv(file, sep=",", names=["code", "ex_price", "lot_size", "ex_year", "ex_month", "ex_day"],
-                     index_col=0)
-    df["ex_date"] = [datetime(row["ex_year"], row["ex_month"], row["ex_day"]) for index, row in df.iterrows()]
-    return df.drop(columns=["ex_year", "ex_month", "ex_day"])
+def get_details(file: str) -> pd.DataFrame:
+    df = pd.read_csv(file, sep=",", index_col=1, header=0, names=["code", "ex_price", "ex_date", "lot_size"])
+    df["ex_date"] = pd.to_datetime(df["ex_date"], format="%Y-%M-%d")
+    df["ex_price"] = [int(pr.replace(",","").replace(".000","")) for pr in df["ex_price"]]
+    df["lot_size"] = [int(si) for si in df["lot_size"]]
+    return df.drop(columns=["code"])
 
 #a list of instrument codes that update real time data and present with relevant ratios in dataframe format
 class UpdateList(object):
-    def __init__(self, code_list, index):
+    def __init__(self, code_list, index, **kwargs):
         assert index.lower() in ["hsi", "hscei"]
+
+        std_output_columns = kwargs.get("std_output_columns",['code', "bid", "ask", "ex_price", "be_rel_ask", "value%", "days_to_maturity"])
+        data_file = kwargs.get("data_file", f"{index.lower()}_put_data.csv")
+
+        self.std_output_columns = std_output_columns
         self.code_list = code_list
         self.index = index.upper()
-        self.details = get_details(f"{index.lower()}_data.csv")
+        self.details = get_details(data_file)
+        print("Instrument details loaded:\n")
+        print(self.details)
+
         self.update_index()
         self.update_list()
 
-    #standard sort mechanism that applies to all output
+    #standard sort mechanism:
+    # sort by days to maturity first, than ex_price, than breakeven (b/e) relative to ask price, than b/e relative to bid price
     def std_sort(self, data):
         return data.sort_values(["days_to_maturity", "ex_price", "be_rel_ask", "be_rel_bid"], ascending=[1, 0, 0,0])
 
-    # refresh and return result in list
+    #standard output mechanism:
     def std_output(self, data):
         data['code'] = data.index
         data["be_rel_ask"] = [int(be) for be in data["be_rel_ask"]]
-        data = data[['code', "bid", "ask", "ex_price", "be_rel_ask", "value%", "days_to_maturity"]]
+        data = data[self.std_output_columns]
         return data.values.tolist()
+        #sample output:
+        # [[20463, 0.2, 0.201, 11200, -66, '91.54%', 21],
+        # [20360, 0.079, 0.085, 10688, -156, '58.82%', 21]]
 
     # generate the full data of the code list
     def update_list(self):
@@ -85,6 +95,7 @@ class UpdateList(object):
         data = get_real_time(self.code_list)
         df = pd.DataFrame(data).transpose()
         df.columns = column_name[:13]
+        print(df)
         df = pd.merge(df, self.details, left_index=True, right_index=True)
 
         # calculate essential ratios on real time data
@@ -112,20 +123,16 @@ class UpdateList(object):
 
     # derive the real time index data
     def update_index(self):
-        data = get_real_time(self.index)
+        data = get_real_time([self.index])
         df = pd.DataFrame(data).transpose()
         df.columns = column_name[:13]
         self.rt_index = df
 
-    # refresh real time data
+    # refresh real time data and return every instrument
     def refresh(self):
         self.update_index()
         self.update_list()
-        return self.rt_codes
-
-    def refresh_std(self):
-        df = self.refresh()
-        return self.std_output(df)
+        return self.std_output(self.rt_codes)
 
     # return the peers of a target instrument that match exactly its specifics(ex-price and maturity)
     def peer_comp_same(self, target_code):
@@ -135,8 +142,7 @@ class UpdateList(object):
         df = df[df["ex_price"] == target_details["ex_price"]]
         df = df[df["days_to_maturity"] == target_details["days_to_maturity"]]
 
-        return self.std_sort(df)
-
+        return self.std_output(self.std_sort(df))
 
     # return the peers of a target instrument that match exactly its specifics(ex-price and maturity)
     def peer_comp_similar(self, target_code, **thresholds):
@@ -148,28 +154,11 @@ class UpdateList(object):
         df = df[abs(df["ex_price"] - target_details["ex_price"]) <= ex_price_thre]
         df = df[abs(df["days_to_maturity"] - target_details["days_to_maturity"]) <= days_to_maturity_thre]
 
-        return self.std_sort(df)
-
-    def imply_time_value(self, target_code, threshold=1000):
-        df = self.rt_codes
-        target_details = df[df.index == target_code].iloc[0]
-        df_comp = df[abs(df["ex_price"] - target_details["ex_price"]) <= threshold]
-        df_comp["ask_per_p"] = df_comp["ask"] / df_comp["lot_size"]
-        print(df_comp[["bid", "ask", "ex_price", "lot_size", "ask_per_p", "days_to_maturity"]])
-
-        #find the base group: group of instruments with the shortest DTM
-        df_base = df_comp[df_comp["ex_date"] == df_comp.ex_date.min()]
-
-        #find the base instrument: the cheapest among the group
-        df_base["ask_per_p"] = df_base["ask"] / df_base["lot_size"]
-        df_base = df_base[df_base["premium"] == df_base.premium.min()]
-        base_details = df_base.iloc[0]
-
-        compare = pd.DataFrame([target_details, base_details])
-        print(compare[["bid", "ask", "ex_price", "lot_size", "be_rel_ask", "value", "value%", "days_to_maturity"]])
-        value_adj = base_details["value"] - target_details["value"] #adjust the difference in value resulted from ex_price difference
+        return self.std_output(self.std_sort(df))
 
 if __name__ == "__main__":
-    print(gen_url(["20360",23106,1699,"700"]))
 
-
+    d = get_details("hsi_put_data.csv")
+    cl = list(d.index)
+    u = UpdateList(cl,"HSI")
+    print(u.peer_comp_same(11414))
