@@ -51,7 +51,7 @@ def get_real_time(codes: list) -> dict:
 #import the basic data of the instruments
 def get_details(file: str) -> pd.DataFrame:
     df = pd.read_csv(file, sep=",", index_col=1, header=0, names=["code", "ex_price", "ex_date", "lot_size"])
-    df["ex_date"] = pd.to_datetime(df["ex_date"], format="%Y-%M-%d")
+    df["ex_date"] = pd.to_datetime(df["ex_date"], format="%Y-%m-%d")
     df["ex_price"] = [int(pr.replace(",","").replace(".000","")) for pr in df["ex_price"]]
     df["lot_size"] = [int(si) for si in df["lot_size"]]
     return df.drop(columns=["code"])
